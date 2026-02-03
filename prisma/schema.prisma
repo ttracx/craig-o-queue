@@ -1,0 +1,200 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// User & Auth
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  passwordHash  String?
+  stripeCustomerId String? @unique
+  subscriptionId   String?
+  subscriptionStatus String @default("inactive")
+  plan          String    @default("free")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  queues        Queue[]
+  jobs          Job[]
+  webhooks      Webhook[]
+  alerts        Alert[]
+  apiKeys       ApiKey[]
+}
+
+// API Keys for programmatic access
+model ApiKey {
+  id        String   @id @default(cuid())
+  name      String
+  key       String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lastUsed  DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([key])
+}
+
+// Job Queues
+model Queue {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  isPaused    Boolean  @default(false)
+  maxRetries  Int      @default(3)
+  retryDelay  Int      @default(60000) // milliseconds
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  jobs        Job[]
+  webhooks    Webhook[]
+
+  @@unique([name, userId])
+  @@index([userId])
+}
+
+// Jobs
+model Job {
+  id            String    @id @default(cuid())
+  name          String
+  queueId       String
+  queue         Queue     @relation(fields: [queueId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Job data
+  payload       Json
+  result        Json?
+  
+  // Scheduling
+  priority      Int       @default(0) // Higher = more priority
+  scheduledAt   DateTime?
+  startedAt     DateTime?
+  completedAt   DateTime?
+  
+  // Status
+  status        JobStatus @default(PENDING)
+  progress      Int       @default(0) // 0-100
+  
+  // Retry logic
+  attempts      Int       @default(0)
+  maxRetries    Int       @default(3)
+  lastError     String?
+  
+  // Webhook URL for this specific job
+  webhookUrl    String?
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  logs          JobLog[]
+
+  @@index([queueId, status])
+  @@index([userId, status])
+  @@index([scheduledAt])
+  @@index([priority])
+}
+
+enum JobStatus {
+  PENDING
+  SCHEDULED
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+  RETRYING
+}
+
+// Job Logs
+model JobLog {
+  id        String   @id @default(cuid())
+  jobId     String
+  job       Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  level     LogLevel @default(INFO)
+  message   String
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([jobId, createdAt])
+}
+
+enum LogLevel {
+  DEBUG
+  INFO
+  WARN
+  ERROR
+}
+
+// Webhooks
+model Webhook {
+  id          String   @id @default(cuid())
+  name        String
+  url         String
+  secret      String?
+  queueId     String?
+  queue       Queue?   @relation(fields: [queueId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Events to trigger on
+  onComplete  Boolean  @default(true)
+  onFail      Boolean  @default(true)
+  onRetry     Boolean  @default(false)
+  
+  isActive    Boolean  @default(true)
+  lastTriggered DateTime?
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+  @@index([queueId])
+}
+
+// Failure Alerts
+model Alert {
+  id          String     @id @default(cuid())
+  userId      String
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type        AlertType
+  channel     String     // email, webhook, etc.
+  destination String     // email address or webhook URL
+  threshold   Int        @default(1) // Number of failures before alerting
+  windowMinutes Int      @default(60) // Time window for threshold
+  isActive    Boolean    @default(true)
+  lastSent    DateTime?
+  
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@index([userId])
+}
+
+enum AlertType {
+  JOB_FAILED
+  QUEUE_STALLED
+  HIGH_FAILURE_RATE
+  JOB_TIMEOUT
+}
+
+// Subscription tracking
+model Subscription {
+  id                   String   @id @default(cuid())
+  stripeSubscriptionId String   @unique
+  stripeCustomerId     String
+  stripePriceId        String
+  status               String
+  currentPeriodStart   DateTime
+  currentPeriodEnd     DateTime
+  cancelAtPeriodEnd    Boolean  @default(false)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@index([stripeCustomerId])
+}
